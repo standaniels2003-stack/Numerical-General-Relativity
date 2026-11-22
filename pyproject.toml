@@ -1,0 +1,4 @@
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = ["slow: symbolic Kerr computations (a few to ~10 seconds each); skip with -m 'not slow'"]

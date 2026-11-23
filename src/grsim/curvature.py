@@ -1,7 +1,42 @@
+"""
+Symbolic curvature of a metric, computed exactly with SymPy.
+
+Pipeline (each step uses the result of the previous one):
+
+    metric g_μv  ->  Christoffel symbols Γ^μ_aβ      christoffel_symbols
+                 ->  Riemann tensor R^a_oμv          riemann_tensor
+                 ->  Ricci tensor R_μv               ricci_tensor
+                 ->  Ricci scalar R                  ricci_scalar
+                 ->  Kretschmann scalar K            kretschmann_scalar
+
+full_curvature runs the whole chain in one call. Every component is passed
+through smart_simplify, so quantities that vanish come out as an exact 0.
+
+Conventions:
+    - Metrics are sympy.Matrix objects; coordinates are lists of SymPy symbols
+      in the same order as the matrix rows/columns.
+    - Tensors are nested Python lists indexed in the order they are written,
+      e.g. Gamma[μ][a][β] = Γ^μ_aβ and Riemann[p][a][μ][v] = R^p_oμv.
+    - Works in any number of dimensions (e.g. the 2-sphere in the tests).
+"""
 import sympy as sp
 # =====================================================================================
 def _reduce_cos_squares(expr):
-    """Rewrites cos(x)**n (n >= 2) as cos(x)**(n % 2) * (1 - sin(x)**2)**(n // 2), then expands."""
+    """
+    Removes every cos² from an expression using cos²x = 1 - sin²x.
+
+    What happens:
+        Each power cos(x)**n with n >= 2 becomes cos(x)**(n % 2) * (1 - sin(x)**2)**(n // 2),
+        so afterwards cos(x) appears at most to the first power. The result is expanded.
+        Applied to a polynomial in sin and cos, this gives one unique form for
+        each expression, which is what lets smart_simplify detect exact zeros.
+
+    Parameters:
+        expr (sympy.Expr): Expression (normally a polynomial numerator or denominator).
+
+    Returns:
+        sympy.Expr: The equivalent expanded expression without cos² terms.
+    """
     expr = expr.replace(
         lambda e: e.is_Pow and isinstance(e.base, sp.cos) and e.exp.is_Integer and e.exp >= 2,
         lambda e: e.base**(e.exp % 2) * (1 - sp.sin(e.base.args[0])**2)**(e.exp // 2),
@@ -50,18 +85,33 @@ def smart_simplify(term, trigsimp=False):
 # =====================================================================================
 def christoffel_symbols(g, coords, trigsimp=False, g_inv=None):
     """
-    Function to calculate the Christoffel Symbols using the metric tensor.
+    Computes the Christoffel symbols (of the second kind) of a metric.
 
-    Mathematical Formula: Gamma^i_{jk} = 1/2 * g^{il} * (g_{kl,j} + g_{jl,k} - g_{jk,l})
+    Formula:
+        Γ^i_jk = 1/2 g^il (∂_j g_kl + ∂_k g_jl - ∂_l g_jk)
+
+    What happens:
+        The metric is differentiated symbolically with respect to each coordinate,
+        contracted with the inverse metric, and every component is simplified
+        with smart_simplify. All n³ components are computed (Γ^i_jk = Γ^i_kj,
+        so about half of them are duplicates). They describe how the coordinate
+        basis changes from point to point; they appear directly in the geodesic
+        equation and are the input for riemann_tensor.
 
     Parameters:
-        g (sympy.Matrix): The metric tensor.
-        coords (list): List of coordinate symbols.
-        trigsimp (bool): If True, applies heavy trigonometric simplification.
-        g_inv (sympy.Matrix, optional): Precomputed inverse metric. Computed from g if omitted.
+        g (sympy.Matrix): The metric g_ij, an nxn symmetric matrix.
+        coords (list): The n coordinate symbols, in the order of the rows of g.
+        trigsimp (bool): If True, also applies sp.trigsimp (prettier, slower).
+        g_inv (sympy.Matrix, optional): Precomputed inverse metric g^ij, to avoid
+                                        computing it twice. Computed from g if omitted.
 
     Returns:
-        list: A 3D nested list representing the components Gamma^i_{jk}
+        list: Nested list of shape nxnxn with Gamma[i][j][k] = Γ^i_jk (SymPy expressions).
+
+    Example:
+        >>> r, th = sp.symbols("r theta", positive=True)
+        >>> christoffel_symbols(sp.diag(1, r**2), [r, th])[0][1][1]    # flat plane in polar coordinates
+        -r
     """
     n = g.shape[0]
     if g_inv is None:
@@ -84,18 +134,27 @@ def christoffel_symbols(g, coords, trigsimp=False, g_inv=None):
 # =====================================================================================
 def riemann_tensor(gamma, coords, trigsimp=False):
     """
-    Computes the Riemann curvature tensor of the second kind from Christoffel symbols.
+    Computes the Riemann curvature tensor R^i_jkl from the Christoffel symbols.
 
-    Mathematical Formula:
-        R^i_{jkl} = d_k(Gamma^i_{jl}) - d_l(Gamma^i_{jk}) + Gamma^i_{km} Gamma^m_{jl} - Gamma^i_{lm} Gamma^m_{jk}
+    Formula:
+        R^i_jkl = ∂_k Γ^i_jl - ∂_l Γ^i_jk + Γ^i_km Γ^m_jl - Γ^i_lm Γ^m_jk
+
+    What happens:
+        The Christoffel symbols are differentiated and multiplied according to the
+        formula above, and each of the n⁴ components is simplified. The Riemann
+        tensor measures true curvature: it is zero everywhere if and only if
+        spacetime is flat, whatever coordinates are used. This is the slowest
+        step of the chain (for Kerr it takes about 10 s).
 
     Parameters:
-        gamma (list): The 3D nested list of Christoffel symbols.
-        coords (list): List of coordinate symbols.
-        trigsimp (bool): If True, applies heavy trigonometric simplification.
+        gamma (list): Christoffel symbols as returned by christoffel_symbols,
+                      gamma[i][j][k] = Γ^i_jk.
+        coords (list): The coordinate symbols used for gamma.
+        trigsimp (bool): If True, also applies sp.trigsimp (prettier, slower).
 
     Returns:
-        list: A 4D nested list representing the components R^i_{jkl}.
+        list: Nested list of shape nxnxnxn with Riemann[i][j][k][l] = R^i_jkl
+              (first index up, the other three down).
     """
     n = len(gamma)
     Riemann = [[[[0 for i in range(n)] for i in range(n)] for i in range(n)] for i in range(n)]
@@ -119,17 +178,24 @@ def riemann_tensor(gamma, coords, trigsimp=False):
 # =====================================================================================
 def ricci_tensor(Riemann, trigsimp=False):
     """
-    Computes the Ricci tensor by contracting the Riemann tensor.
+    Computes the Ricci tensor R_ij by contracting the Riemann tensor.
 
-    Mathematical Formula:
-        R_{ij} = R^k_{ikj}
+    Formula:
+        R_ij = R^k_ikj   (sum over k: the upper index with the third index)
+
+    What happens:
+        For each pair (i, j) the n terms R^k_ikj are summed and simplified.
+        No metric is needed for this contraction. In vacuum (no matter or
+        energy), Einstein's equations reduce to R_ij = 0, so this is the
+        quantity to check for vacuum solutions such as Schwarzschild and Kerr.
 
     Parameters:
-        Riemann (list): The 4D Riemann tensor.
-        trigsimp (bool): If True, applies heavy trigonometric simplification.
+        Riemann (list): Riemann tensor as returned by riemann_tensor,
+                        Riemann[i][j][k][l] = R^i_jkl.
+        trigsimp (bool): If True, also applies sp.trigsimp (prettier, slower).
 
     Returns:
-        list: A 2D matrix (list of lists) representing the Ricci tensor components.
+        list: Nested list of shape nxn with Ricci[i][j] = R_ij (symmetric).
     """
     n = len(Riemann)
     Ricci = [[0 for i in range(n)] for i in range(n)]
@@ -145,19 +211,25 @@ def ricci_tensor(Riemann, trigsimp=False):
 # =====================================================================================
 def ricci_scalar(g, Ricci, trigsimp=False):
     """
-    Computes the Ricci scalar by contracting the Ricci tensor with the inverse metric.
+    Computes the Ricci scalar (scalar curvature) R from the Ricci tensor.
 
-    Mathematical Formula:
-        R = g^{ij} R_{ij}
+    Formula:
+        R = g^ij R_ij
+
+    What happens:
+        The inverse metric is computed from g, multiplied with the Ricci tensor
+        and summed over both indices, then simplified. The result is a single
+        coordinate-independent number at each point, e.g. R = 2/a² for a sphere
+        of radius a and R = 0 for any vacuum solution.
 
     Parameters:
-        g (sympy.Matrix): The metric tensor g_{ij} (not the inverse; the
-                          inverse is computed inside this function).
-        Ricci (list): The Ricci tensor.
-        trigsimp (bool): If True, applies heavy trigonometric simplification.
+        g (sympy.Matrix): The metric g_ij (not the inverse; the inverse is
+                          computed inside this function).
+        Ricci (list): Ricci tensor as returned by ricci_tensor, Ricci[i][j] = R_ij.
+        trigsimp (bool): If True, also applies sp.trigsimp (prettier, slower).
 
     Returns:
-        sympy expression: The scalar curvature.
+        sympy.Expr: The Ricci scalar R.
     """
     n = len(Ricci)
     g_inv = g.inv()
@@ -232,15 +304,31 @@ def kretschmann_scalar(g, Riemann, trigsimp=False):
 # =====================================================================================
 def full_curvature(g, coords, trigsimp=False):
     """
-    Computes all curvature quantities of a metric in one go.
+    Computes all curvature quantities of a metric in one call.
+
+    What happens:
+        Runs the whole chain: christoffel_symbols -> riemann_tensor ->
+        ricci_tensor -> ricci_scalar and kretschmann_scalar, each step using
+        the previous result. Run time is dominated by the Riemann tensor.
 
     Parameters:
-        g (sympy.Matrix): The metric tensor g_{ij}.
-        coords (list): List of coordinate symbols.
-        trigsimp (bool): If True, applies heavy trigonometric simplification.
+        g (sympy.Matrix): The metric g_ij, an nxn symmetric matrix.
+        coords (list): The n coordinate symbols, in the order of the rows of g.
+        trigsimp (bool): If True, also applies sp.trigsimp at every step (prettier, slower).
 
     Returns:
-        tuple: (Gamma^i_{jk}, R^i_{jkl}, R_{ij}, R, K)
+        tuple: (gamma, Riemann, Ricci, R, K) where
+            gamma[i][j][k]      = Γ^i_jk     (nxnxn nested list)
+            Riemann[i][j][k][l] = R^i_jkl    (nxnxnxn nested list)
+            Ricci[i][j]         = R_ij       (nxn nested list)
+            R                   = Ricci scalar      (sympy.Expr)
+            K                   = Kretschmann scalar (sympy.Expr)
+
+    Example:
+        >>> th, ph, a = sp.symbols("theta phi a", positive=True)
+        >>> _, _, _, R, K = full_curvature(sp.diag(a**2, a**2 * sp.sin(th)**2), [th, ph])
+        >>> R, K                                   # sphere of radius a
+        (2/a**2, 4/a**4)
     """
     gamma = christoffel_symbols(g, coords, trigsimp)
     Riemann = riemann_tensor(gamma, coords, trigsimp)

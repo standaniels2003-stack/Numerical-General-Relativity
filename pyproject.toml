@@ -1,4 +1,21 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grsim"
+version = "0.1.0"
+description = "Symbolic curvature and numerical geodesics for general relativity"
+requires-python = ">=3.9"
+dependencies = ["sympy>=1.14.0", "numpy>=2.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-markers = ["slow: symbolic Kerr computations (a few to ~10 seconds each); skip with -m 'not slow'"]
+markers = [
+    "slow: symbolic Kerr computations (a few to ~10 seconds each); skip with -m 'not slow'",
+    "diagnostics: conservation checks along integrated geodesics; not part of a plain `pytest` run, run them with -m diagnostics",
+]

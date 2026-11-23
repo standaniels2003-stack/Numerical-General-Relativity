@@ -1,3 +1,16 @@
+# Install everything with:  python -m pip install -r requirements.txt
+
+# Libraries the code uses
 sympy>=1.14.0
 numpy>=2.0
+
+# Running the tests
 pytest>=7.0
+
+# The orbit notebook (notebooks/orbits.ipynb)
+matplotlib>=3.8
+jupyter
+
+# This project itself, in editable mode, so `from grsim import ...` works
+# everywhere and edits in src/grsim/ take effect without reinstalling.
+-e .
